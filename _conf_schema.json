@@ -1,0 +1,86 @@
+{
+  "api_key": {
+    "type": "string",
+    "description": "阿里百炼 DashScope API Key",
+    "hint": "在阿里百炼控制台创建并粘贴",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "api_region": {
+    "type": "string",
+    "description": "阿里百炼节点",
+    "options": ["cn", "intl"],
+    "hint": "cn=中国大陆；intl=新加坡",
+    "default": "cn"
+  },
+  "model_id": {
+    "type": "string",
+    "description": "TTS 合成模型 ID",
+    "hint": "用于聊天文本转语音",
+    "default": "qwen3-tts-vc-realtime-2025-11-27"
+  },
+  "voice_target_model": {
+    "type": "string",
+    "description": "创建音色时的目标模型 ID",
+    "hint": "对应 create_voice 的 target_model，可按阿里文档填写",
+    "default": "cosyvoice-v3.5-plus"
+  },
+  "voice_enrollment_model": {
+    "type": "string",
+    "description": "音色管理模型 ID",
+    "hint": "对应创建/查询/删除音色接口中的 model",
+    "default": "voice-enrollment"
+  },
+  "voice_language_hints": {
+    "type": "string",
+    "description": "创建音色的语言提示",
+    "hint": "可选，例如 zh 或 en",
+    "default": ""
+  },
+  "voice_prefix_filter": {
+    "type": "string",
+    "description": "音色列表前缀过滤（可选）",
+    "default": ""
+  },
+  "max_text_length": {
+    "type": "int",
+    "description": "触发 TTS 的最大文本长度",
+    "hint": "超过该长度将保留文字输出",
+    "default": 120
+  },
+  "tts_probability": {
+    "type": "int",
+    "description": "TTS 触发概率 (0-100)",
+    "default": 100
+  },
+  "voice_files": {
+    "type": "file",
+    "description": "上传用于创建音色的音声文件（支持多选）",
+    "hint": "上传后会归档到 /AstrBot/data/plugin_data/astrbot_plugin_aliyun_bai_lian_tts/voice_uploads，再执行“创建音色 <文件名(不含后缀)>”创建",
+    "default": [],
+    "file_types": ["mp3", "wav", "m4a", "flac", "ogg", "amr", "aac"]
+  },
+  "active_voice_id": {
+    "type": "string",
+    "description": "当前生效音色ID",
+    "hint": "建议通过「设置音色 <音色ID>」命令维护",
+    "default": ""
+  },
+  "admin_user_ids": {
+    "type": "list",
+    "description": "允许执行所有管理命令的管理员用户ID列表",
+    "hint": "包含：创建音色、创建音色状态、音色列表、设置音色、删除音色、刷新音色",
+    "default": []
+  },
+  "cache_ttl_seconds": {
+    "type": "int",
+    "description": "语音缓存有效期（秒）",
+    "hint": "0 表示不过期",
+    "default": 604800
+  },
+  "max_cache_items": {
+    "type": "int",
+    "description": "语音缓存最大文件数",
+    "default": 200
+  }
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 import wave
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,8 @@ class _WaveCallback:
         self._finish()
 
     def on_error(self, error):
-        self.error = str(error)
+        message = str(error).strip()
+        self.error = message or repr(error)
         self._done.set()
 
     def on_event(self, response):
@@ -46,7 +48,7 @@ class _WaveCallback:
             return
 
         if event_type == "error":
-            self.error = str(response.get("message", "Unknown error"))
+            self.error = str(response.get("message") or response.get("error") or response).strip()
             self._done.set()
             return
 
@@ -85,14 +87,66 @@ class AliyunTTSClient:
             "Content-Type": "application/json",
         }
 
-    def _post_customization(self, payload: dict[str, Any], timeout: int = 60) -> dict[str, Any]:
-        response = requests.post(
-            self.customization_url,
-            json=payload,
-            headers=self._headers(),
-            timeout=timeout,
-        )
-        response.raise_for_status()
+    def _format_http_error(self, response: requests.Response) -> str:
+        status = response.status_code
+        code = ""
+        message = ""
+        request_id = ""
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+
+        if isinstance(data, dict):
+            code = str(data.get("code") or "").strip()
+            message = str(data.get("message") or "").strip()
+            request_id = str(data.get("request_id") or data.get("requestId") or "").strip()
+
+        if not message:
+            message = response.text.strip().replace("\n", " ")[:300]
+
+        parts = [str(status)]
+        if code:
+            parts.append(code)
+        if message:
+            parts.append(message)
+        if request_id:
+            parts.append(f"request_id={request_id}")
+        return " | ".join(parts)
+
+    def _post_customization(
+        self,
+        payload: dict[str, Any],
+        timeout: int = 60,
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
+        response: requests.Response | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(
+                    self.customization_url,
+                    json=payload,
+                    headers=self._headers(),
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                if attempt < max_retries:
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"调用音色接口失败: {exc}") from exc
+
+            if response.status_code >= 500:
+                if attempt < max_retries:
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"音色接口服务异常: {self._format_http_error(response)}")
+
+            if response.status_code >= 400:
+                raise RuntimeError(f"音色接口请求失败: {self._format_http_error(response)}")
+            break
+
+        if response is None:
+            raise RuntimeError("调用音色接口失败: 未收到响应")
 
         data = response.json()
         if not isinstance(data, dict):
@@ -101,7 +155,9 @@ class AliyunTTSClient:
         code = str(data.get("code", "")).strip()
         if code and code != "200":
             message = str(data.get("message", "")).strip()
-            raise RuntimeError(f"{code}: {message or data}")
+            request_id = str(data.get("request_id") or data.get("requestId") or "").strip()
+            suffix = f" (request_id={request_id})" if request_id else ""
+            raise RuntimeError(f"{code}: {message or data}{suffix}")
         return data
 
     def create_voice(
@@ -163,7 +219,7 @@ class AliyunTTSClient:
         self,
         enrollment_model: str = COSY_VOICE_ENROLLMENT_MODEL,
         prefix: str = "",
-        page_index: int = 1,
+        page_index: int = 0,
         page_size: int = 100,
     ) -> list[dict[str, str]]:
         input_data = {
@@ -218,7 +274,24 @@ class AliyunTTSClient:
         }
         self._post_customization(payload=payload)
 
-    async def synthesize(self, text: str, model_id: str, voice_id: str, output_path: Path) -> Path:
+    def _dashscope_base_http_url(self) -> str:
+        marker = "/services/audio/tts/customization"
+        if marker in self.customization_url:
+            return self.customization_url.split(marker, 1)[0]
+        return self.customization_url.rsplit("/", 1)[0]
+
+    def _dashscope_inference_ws_url(self) -> str:
+        if self.ws_url.endswith("/realtime"):
+            return self.ws_url[: -len("/realtime")] + "/inference"
+        return self.ws_url
+
+    async def _synthesize_realtime(
+        self,
+        text: str,
+        model_id: str,
+        voice_id: str,
+        output_path: Path,
+    ) -> Path:
         import dashscope
         from dashscope.audio.qwen_tts_realtime import (
             AudioFormat,
@@ -242,6 +315,8 @@ class AliyunTTSClient:
                 callback_impl.on_event(response)
 
         dashscope.api_key = self.api_key
+        dashscope.base_http_api_url = self._dashscope_base_http_url()
+        dashscope.base_websocket_api_url = self._dashscope_inference_ws_url()
         callback = CallbackAdapter()
         tts = QwenTtsRealtime(model=model_id, callback=callback, url=self.ws_url)
 
@@ -270,3 +345,66 @@ class AliyunTTSClient:
             raise RuntimeError("语音合成失败: 未生成有效音频")
 
         return output_path
+
+    def _synthesize_tts_v2(
+        self,
+        text: str,
+        model_id: str,
+        voice_id: str,
+        output_path: Path,
+    ) -> Path:
+        import dashscope
+        from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+
+        dashscope.api_key = self.api_key
+        dashscope.base_http_api_url = self._dashscope_base_http_url()
+        dashscope.base_websocket_api_url = self._dashscope_inference_ws_url()
+
+        synthesizer = SpeechSynthesizer(
+            model=model_id,
+            voice=voice_id,
+            format=AudioFormat.WAV_24000HZ_MONO_16BIT,
+        )
+        audio_data = synthesizer.call(text=text, timeout_millis=90000)
+        if not audio_data:
+            raise RuntimeError("tts_v2 未返回有效音频")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(audio_data)
+
+        if output_path.stat().st_size == 0:
+            raise RuntimeError("tts_v2 未生成有效音频文件")
+        return output_path
+
+    async def synthesize(
+        self,
+        text: str,
+        model_id: str,
+        voice_id: str,
+        output_path: Path,
+        fallback_model_id: str = "",
+    ) -> Path:
+        try:
+            return await self._synthesize_realtime(
+                text=text,
+                model_id=model_id,
+                voice_id=voice_id,
+                output_path=output_path,
+            )
+        except Exception as realtime_exc:
+            alt_model = str(fallback_model_id or "").strip()
+            if not alt_model or alt_model == model_id:
+                raise RuntimeError(f"语音合成失败: {realtime_exc}") from realtime_exc
+
+            try:
+                return await asyncio.to_thread(
+                    self._synthesize_tts_v2,
+                    text,
+                    alt_model,
+                    voice_id,
+                    output_path,
+                )
+            except Exception as tts_v2_exc:
+                raise RuntimeError(
+                    f"语音合成失败: realtime={realtime_exc}; tts_v2={tts_v2_exc}"
+                ) from tts_v2_exc

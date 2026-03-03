@@ -44,3 +44,20 @@
   - `/AstrBot/data/plugin_data/astrbot_plugin_aliyun_bai_lian_tts/audio_cache/`：合成音频缓存
 - 上传文件不会自动创建音色，必须执行 `创建音色` 指令。
 - 创建音色时只使用本地归档文件，不再依赖公网 URL。
+
+## 本地开发
+
+```bash
+# 1) 初始化虚拟环境
+python3 -m venv .venv
+
+# 2) 激活虚拟环境
+source .venv/bin/activate
+
+# 3) 安装依赖
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+
+# 4) 退出虚拟环境
+deactivate
+```

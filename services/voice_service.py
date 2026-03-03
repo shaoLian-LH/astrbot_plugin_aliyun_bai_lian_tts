@@ -150,9 +150,6 @@ class VoiceService:
                 enrollment_model,
                 language_hints,
             )
-            query = await asyncio.to_thread(client.query_voice, voice_id, enrollment_model)
-            status = str(query.get("status") or "UNKNOWN").strip().upper()
-            message = ""
         except Exception as exc:
             self._update_creation_job(
                 source_name=source_key,
@@ -163,6 +160,15 @@ class VoiceService:
                 message=str(exc),
             )
             raise
+
+        status = "UNKNOWN"
+        message = ""
+        try:
+            query = await asyncio.to_thread(client.query_voice, voice_id, enrollment_model)
+            status = str(query.get("status") or "UNKNOWN").strip().upper()
+        except Exception as exc:
+            message = f"创建成功，但查询状态失败: {exc}"
+            logger.warning(f"[AliyunBailianTTS] 创建后查询音色状态失败: voice_id={voice_id}, {exc}")
 
         profile = VoiceProfile(
             name=source_key,
@@ -193,6 +199,7 @@ class VoiceService:
             "voice_id": voice_id,
             "status": status,
             "target_model": target_model,
+            "message": message,
         }
 
     async def get_creation_status(self, refresh_remote: bool = True) -> list[dict[str, str]]:
@@ -249,7 +256,7 @@ class VoiceService:
         prefix_filter = self._get_str("voice_prefix_filter", "").strip()
 
         try:
-            voices = await asyncio.to_thread(client.list_voices, enrollment_model, prefix_filter, 1, 100)
+            voices = await asyncio.to_thread(client.list_voices, enrollment_model, prefix_filter, 0, 100)
         except Exception as exc:
             if not local_map:
                 raise
@@ -339,11 +346,16 @@ class VoiceService:
 
         output_path = self.repository.build_cached_audio_path(cache_key)
         client = self._build_client()
+        fallback_model_id = self._resolve_synthesis_fallback_model(
+            voice_id=active_voice_id,
+            primary_model=model_id,
+        )
         await client.synthesize(
             text=text,
             model_id=model_id,
             voice_id=active_voice_id,
             output_path=output_path,
+            fallback_model_id=fallback_model_id,
         )
 
         max_items = self._get_int("max_cache_items", DEFAULT_MAX_CACHE_ITEMS, minimum=1)
@@ -572,6 +584,21 @@ class VoiceService:
             if not voice_id or voice_id == skip:
                 continue
             return voice_id
+        return ""
+
+    def _resolve_synthesis_fallback_model(self, voice_id: str, primary_model: str) -> str:
+        target_voice_id = str(voice_id or "").strip()
+        profile_model = ""
+        for profile in self._profiles.values():
+            if str(profile.voice_id or "").strip() != target_voice_id:
+                continue
+            profile_model = str(profile.model_id or "").strip()
+            break
+
+        configured_target_model = self._get_str("voice_target_model", "").strip()
+        for candidate in (profile_model, configured_target_model):
+            if candidate and candidate != primary_model:
+                return candidate
         return ""
 
     def _build_signature(

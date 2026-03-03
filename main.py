@@ -160,6 +160,9 @@ class AliyunBailianTTSPlugin(Star):
             f"目标模型: {result.get('target_model', '')}",
             "可使用「创建音色状态」继续查看部署进度。",
         ]
+        extra_message = str(result.get("message", "")).strip()
+        if extra_message:
+            lines.append(f"提示: {extra_message}")
         yield event.plain_result("\n".join(lines))
 
     @filter.command("创建音色状态", alias={"tts_create_voice_status"})
@@ -265,8 +268,14 @@ class AliyunBailianTTSPlugin(Star):
 
     def _resolve_data_dir(self) -> Path:
         target = Path(PLUGIN_DATA_ROOT) / PLUGIN_ID
-        target.mkdir(parents=True, exist_ok=True)
-        return target
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            return target
+        except OSError as exc:
+            logger.warning(f"[AliyunBailianTTS] 默认数据目录不可写，使用本地回退目录: {exc}")
+            fallback = Path.cwd() / ".plugin_data" / PLUGIN_ID
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
 
     def _read_int_config(self, key: str, default: int, min_value: int = 0, max_value: int = 10**9) -> int:
         if self.config is None:

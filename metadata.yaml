@@ -1,6 +1,6 @@
 name: astrbot_plugin_aliyun_bai_lian_tts
 display_name: 阿里百炼多音色TTS
 desc: 支持管理员手动创建/管理音色并缓存语音的阿里百炼 TTS 插件。
-version: v0.0.1
+version: v0.1.0
 author: xuemufan
 repo: https://github.com/xuemufan/astrbot_plugin_aliyun_bai_lian_tts
